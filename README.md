@@ -24,6 +24,11 @@ BAL Easy Heirs lets you generate a printable, fold-in-three A4 sheet for each be
 2. In Electrum, go to **Tools → Plugins → Load plugin from ZIP** (or place the extracted `bal_easy_heirs` folder in Electrum's `plugins` directory).
 3. Enable **BAL Easy Heirs** from the plugin list.
 
+## Security
+
+See [SECURITY.md](SECURITY.md) for a review of seed generation and
+storage, and a known limitation around the system print dialog.
+
 ## Related project
 
 [BAL — Bitcoin After Life](https://bitcoin-after.life) is the main inheritance plugin that reads the JSON list exported here.
