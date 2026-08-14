@@ -634,19 +634,53 @@ def render_report(s, wallet_name, rows, page=1, per_page=9):
     s.wrapped(MARGIN + 3, y + 6.5, w - 6, note, C_BODY, size=7.4)
     y += hn + 5
 
+    # Geometria delle colonne (in mm). Le teniamo come costanti cosi' che le
+    # intestazioni e i valori di ogni riga cadano sempre sotto/sopra la stessa
+    # posizione. Le colonne di destra (quota, tipo) sono allineate a destra
+    # rispetto a un bordo fisso; il QR occupa l'ultima colonna, a fine riga.
+    BEN_X = MARGIN + 13       # nome + indirizzo
+    QUOTA_R = 140.0           # bordo destro della colonna "Quota"
+    TIPO_R = 178.0            # bordo destro della colonna "Tipo"
+    QR_C = 188.5              # centro della colonna "QR"
+    QS = 11.0                 # lato del QR (quadrato), in mm
+
+    # ---- intestazioni di colonna -----------------------------------------
+    hy = y
+    fh = s.font(7, bold=True)
+    s.text(MARGIN, hy, "BUSTA", C_MUTED, font=fh)
+    s.text(BEN_X, hy, "BENEFICIARIO  \u00b7  INDIRIZZO", C_MUTED, font=fh)
+    for label, rx in (("QUOTA", QUOTA_R), ("TIPO", TIPO_R)):
+        lw = s.to_mm(s.metrics(fh).horizontalAdvance(label))
+        s.text(rx - lw, hy, label, C_MUTED, font=fh)
+    s.centred(QR_C, hy, "QR", C_MUTED, font=fh)
+    y = hy + 5
+    s.rule(MARGIN, y, PAGE_W - MARGIN, C_RULE, 0.4)
+    y += 4
+
     start = (page - 1) * per_page
     chunk = rows[start:start + per_page]
     pending = []
 
-    for i, r in enumerate(chunk, start=start + 1):
-        s.text(MARGIN, y + 0.8, f"{i:02d}", C_MUTED, size=7.5)
-        s.text(MARGIN + 8, y, r["name"], C_INK, size=10.5, bold=True)
-        tag = "GENERATO DA ME" if r.get("generated") else "INDIRIZZO FORNITO"
-        fm = s.metrics(s.font(6.8, bold=True))
-        tw = s.to_mm(fm.horizontalAdvance(tag))
-        s.text(PAGE_W - MARGIN - tw, y + 1, tag, C_ACC_D, size=6.8, bold=True)
+    for r in chunk:
+        y_top = y
 
-        # quota assegnata: e' il dato che serve all'esecutore per controllare
+        # Colonna "Busta": il numero della busta fisica che contiene il foglio
+        # di questo beneficiario (non piu' la posizione nell'elenco). Se manca
+        # lo segnaliamo con un trattino.
+        env = r.get("envelope")
+        busta = str(env) if env not in (None, "", 0) else "\u2014"
+        s.text(MARGIN, y_top, busta, C_INK, size=11, bold=True)
+
+        # Nome del beneficiario.
+        s.text(BEN_X, y_top, r["name"], C_INK, size=10.5, bold=True)
+
+        # Colonna "Tipo": generato dal titolare o indirizzo fornito.
+        tag = "GENERATO DA ME" if r.get("generated") else "INDIRIZZO FORNITO"
+        ftag = s.font(6.8, bold=True)
+        tw = s.to_mm(s.metrics(ftag).horizontalAdvance(tag))
+        s.text(TIPO_R - tw, y_top + 1, tag, C_ACC_D, font=ftag)
+
+        # Colonna "Quota": e' il dato che serve all'esecutore per controllare
         # che la somma torni. Viene da BAL e puo' essere una percentuale o un
         # importo fisso; se e' ancora il segnaposto lo diciamo esplicitamente.
         share = r.get("share") or ""
@@ -654,26 +688,39 @@ def render_report(s, wallet_name, rows, page=1, per_page=9):
             undef = r.get("placeholder_amount")
             fs = s.font(11 if not undef else 8, bold=True)
             sw = s.to_mm(s.metrics(fs).horizontalAdvance(share))
-            s.text(PAGE_W - MARGIN - tw - sw - 6, y - 0.3, share,
+            s.text(QUOTA_R - sw, y_top - 0.3, share,
                    C_ALERT if undef else C_INK, font=fs)
         y += 5.4
-        s.text(MARGIN + 8, y, r.get("address") or "\u2014", C_INK,
+
+        # Indirizzo pubblico (monospazio).
+        s.text(BEN_X, y, r.get("address") or "\u2014", C_INK,
                size=8.4, bold=True, mono=True)
         y += 4.8
 
+        # Nota facoltativa sotto l'indirizzo (data di consegna, segnaposto).
+        # Il numero di busta ora e' nella colonna a sinistra, non piu' qui.
         extra = []
-        if r.get("envelope"):
-            extra.append(f"busta n. {r['envelope']}")
         if r.get("date"):
             extra.append(f"consegna: {r['date']}")
         if r.get("placeholder_amount"):
             extra.append("IMPORTO DA DEFINIRE IN BAL")
             pending.append(r["name"])
         if extra:
-            s.text(MARGIN + 8, y, "   \u00b7   ".join(extra),
+            s.text(BEN_X, y, "   \u00b7   ".join(extra),
                    C_ALERT if r.get("placeholder_amount") else C_MUTED,
                    size=6.9)
             y += 4.2
+
+        # Colonna "QR": QR dell'indirizzo pubblico, a fine riga. Garantiamo
+        # che il blocco sia alto almeno quanto il QR, poi lo centriamo
+        # verticalmente nello spazio della riga (resta dentro la riga).
+        if y < y_top + QS + 0.5:
+            y = y_top + QS + 0.5
+        addr = r.get("address")
+        if addr:
+            qy = y_top + ((y - y_top) - QS) / 2
+            s.qr(addr, QR_C - QS / 2, qy, QS)
+
         s.rule(MARGIN, y, PAGE_W - MARGIN, C_HAIR, 0.25)
         y += 3.4
 

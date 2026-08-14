@@ -208,6 +208,9 @@ QPushButton[bal="danger"]:hover {{ background:#8f1c22; }}
 QPushButton[bal="del"] {{ border:none; background:transparent; color:{MUTED};
     font-size:16px; font-weight:700; padding:2px 8px; }}
 QPushButton[bal="del"]:hover {{ color:{DANGER}; }}
+QPushButton[balMuted="true"] {{ background:#f0f2f4; border:1px solid #e2e6ea;
+    color:#9aa5b0; }}
+QPushButton[balMuted="true"]:hover {{ background:#f0f2f4; }}
 """ + _CHECK_INDICATOR
 
 
@@ -782,8 +785,34 @@ class PrintDialog(QDialog):
         pages = sum(2 if r["generated"] else 1 for r in sel)
         pages += 1 if self.cb_report.isChecked() else 0
 
-        self.b_pdf.setEnabled(bool(sel or self.cb_report.isChecked())
-                              and not with_seed)
+        # Il tasto PDF resta sempre ATTIVO (in Qt un pulsante disabilitato non
+        # riceve ne' clic ne' passaggio del mouse, quindi non potrebbe mostrare
+        # alcun tooltip). Quando non e' utilizzabile lo mostriamo "grigio" via
+        # stile e spieghiamo il perche' nel tooltip (e al clic).
+        has_something = bool(sel) or self.cb_report.isChecked()
+        if with_seed:
+            self._pdf_ok = False
+            self._pdf_reason = _(
+                "Non posso salvare in PDF i fogli con le parole di recupero: "
+                "sul disco resterebbero in chiaro e potrebbero finire per "
+                "sbaglio su un cloud. Questi fogli vanno solo stampati.\n\n"
+                "Puoi pero' salvare in PDF il “Riepilogo per l'esecutore” "
+                "(non contiene parole): deseleziona i beneficiari generati da te "
+                "e lascia spuntato il riepilogo.")
+        elif not has_something:
+            self._pdf_ok = False
+            self._pdf_reason = _(
+                "Seleziona almeno un documento senza parole di recupero "
+                "(o il “Riepilogo per l'esecutore”) per salvarlo in PDF.")
+        else:
+            self._pdf_ok = True
+            self._pdf_reason = _(
+                "Salva sul disco i PDF dei documenti selezionati.")
+        self.b_pdf.setProperty("balMuted", not self._pdf_ok)
+        self.b_pdf.setToolTip(self._pdf_reason)
+        self.b_pdf.style().unpolish(self.b_pdf)
+        self.b_pdf.style().polish(self.b_pdf)
+
         self.b_print.setEnabled(bool(sel) or self.cb_report.isChecked())
 
         if with_seed:
@@ -837,6 +866,12 @@ class PrintDialog(QDialog):
         self.accept()
 
     def _save_pdf(self):
+        # Il tasto e' sempre attivo: se in questo momento non e' utilizzabile,
+        # spieghiamo il perche' invece di non fare nulla in silenzio.
+        if not getattr(self, "_pdf_ok", False):
+            QMessageBox.information(
+                self, _("Salvataggio PDF non disponibile"), self._pdf_reason)
+            return
         sel = self._selected()
         if any(r["generated"] for r in sel):
             return
