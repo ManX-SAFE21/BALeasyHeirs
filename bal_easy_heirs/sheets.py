@@ -1,0 +1,700 @@
+# -*- coding: utf-8 -*-
+"""
+BAL Easy Heirs - SAFE21
+sheets.py : disegno dei fogli, coordinate in millimetri.
+
+Correzione rispetto alla versione precedente
+--------------------------------------------
+Le metriche del font venivano prese con QFontMetricsF(font), cioe' SENZA
+dispositivo: restituivano misure in pixel-schermo (~96 dpi) che venivano poi
+confrontate con larghezze calcolate a 600 dpi. Conseguenze: le righe non
+andavano a capo (la zpub finiva sopra i QR) e l'interlinea era sbagliata (i
+titoli si sovrapponevano ai testi).
+
+Qui le metriche si prendono sempre con QFontMetricsF(font, device), dove
+device e' il dispositivo su cui il painter sta dipingendo. Tutte le misure
+restano quindi nella stessa unita'.
+"""
+
+import random
+
+from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QImage, QPen
+
+# --------------------------------------------------------------------------- #
+PAGE_W, PAGE_H = 210.0, 297.0
+MARGIN = 15.0
+FOLD1, FOLD2 = 99.0, 198.0
+
+C_INK = QColor("#16202A")
+C_BODY = QColor("#39454F")
+C_MUTED = QColor("#7C8892")
+C_RULE = QColor("#C9D0D6")
+C_HAIR = QColor("#E4E9ED")
+# Accento: Cyber Teal di SAFE21, lo stesso dell'interfaccia del plugin, cosi'
+# i fogli stampati sono in sintonia con le finestre (fascia superiore, titoli,
+# etichette di sezione). C_ACC = tinta piena, C_ACC_D = versione scura per il
+# testo su fondo chiaro.
+C_ACC = QColor("#0D9488")
+C_ACC_D = QColor("#0F6E56")
+# Rosso d'allerta allineato a quello del plugin.
+C_ALERT = QColor("#B4232A")
+C_BLACK = QColor("#000000")
+C_WHITE = QColor("#FFFFFF")
+
+
+class Sheet:
+    """Contesto di disegno. Un'istanza per pagina/documento."""
+
+    def __init__(self, painter, dpi):
+        self.p = painter
+        self.dpi = float(dpi)
+
+    # ------------------------------------------------------------ unita' --
+    def mm(self, v):
+        return v / 25.4 * self.dpi
+
+    def to_mm(self, dots):
+        return dots / self.dpi * 25.4
+
+    def font(self, size=9.0, bold=False, mono=False):
+        f = QFont("Courier New" if mono else "Helvetica")
+        f.setStyleHint(QFont.StyleHint.Monospace if mono
+                       else QFont.StyleHint.SansSerif)
+        f.setPointSizeF(size)
+        f.setBold(bold)
+        return f
+
+    def metrics(self, font):
+        """Metriche NEL dispositivo corrente: e' il punto che prima era rotto."""
+        return QFontMetricsF(font, self.p.device())
+
+    def line_h(self, font, leading=1.18):
+        return self.to_mm(self.metrics(font).height()) * leading
+
+    # ------------------------------------------------------------- testo --
+    def text(self, x, y, s, color=C_BODY, font=None, **kw):
+        """Disegna una riga. y = bordo superiore della riga, in mm."""
+        f = font or self.font(**kw)
+        fm = self.metrics(f)
+        self.p.setFont(f)
+        self.p.setPen(QPen(color))
+        self.p.drawText(QPointF(self.mm(x), self.mm(y) + fm.ascent()), s)
+        return y + self.to_mm(fm.height())
+
+    def centred(self, cx, y, s, color=C_BODY, font=None, **kw):
+        f = font or self.font(**kw)
+        fm = self.metrics(f)
+        self.p.setFont(f)
+        self.p.setPen(QPen(color))
+        w = fm.horizontalAdvance(s)
+        self.p.drawText(QPointF(self.mm(cx) - w / 2,
+                                self.mm(y) + fm.ascent()), s)
+        return y + self.to_mm(fm.height())
+
+    def wrapped(self, x, y, w, s, color=C_BODY, font=None,
+                leading=1.18, anywhere=False, **kw):
+        """Testo a capo dentro w mm. Ritorna la y sotto l'ultima riga."""
+        f = font or self.font(**kw)
+        fm = self.metrics(f)
+        self.p.setFont(f)
+        self.p.setPen(QPen(color))
+        maxw = self.mm(w)
+        lh = self.to_mm(fm.height()) * leading
+
+        units = list(s) if anywhere else s.split(" ")
+        join = "" if anywhere else " "
+        line, yy = "", y
+        for u in units:
+            trial = (line + join + u) if line else u
+            if line and fm.horizontalAdvance(trial) > maxw:
+                self.p.drawText(QPointF(self.mm(x), self.mm(yy) + fm.ascent()),
+                                line)
+                yy += lh
+                line = u
+            else:
+                line = trial
+        if line:
+            self.p.drawText(QPointF(self.mm(x), self.mm(yy) + fm.ascent()),
+                            line)
+            yy += lh
+        return yy
+
+    def measure(self, w, s, font=None, leading=1.18, anywhere=False, **kw):
+        """Altezza in mm che occuperebbe wrapped(), senza disegnare."""
+        f = font or self.font(**kw)
+        fm = self.metrics(f)
+        maxw = self.mm(w)
+        lh = self.to_mm(fm.height()) * leading
+        units = list(s) if anywhere else s.split(" ")
+        join = "" if anywhere else " "
+        line, n = "", 0
+        for u in units:
+            trial = (line + join + u) if line else u
+            if line and fm.horizontalAdvance(trial) > maxw:
+                n += 1
+                line = u
+            else:
+                line = trial
+        if line:
+            n += 1
+        return n * lh
+
+    # ----------------------------------------------------------- grafica --
+    def fill(self, x, y, w, h, color):
+        self.p.setPen(Qt.PenStyle.NoPen)
+        self.p.setBrush(QBrush(color))
+        self.p.drawRect(QRectF(self.mm(x), self.mm(y), self.mm(w), self.mm(h)))
+
+    def box(self, x, y, w, h, color=C_RULE, width=0.35):
+        pen = QPen(color)
+        pen.setWidthF(self.mm(width))
+        self.p.setPen(pen)
+        self.p.setBrush(Qt.BrushStyle.NoBrush)
+        self.p.drawRect(QRectF(self.mm(x), self.mm(y), self.mm(w), self.mm(h)))
+
+    def rule(self, x1, y, x2, color=C_RULE, width=0.3):
+        pen = QPen(color)
+        pen.setWidthF(self.mm(width))
+        self.p.setPen(pen)
+        self.p.drawLine(QPointF(self.mm(x1), self.mm(y)),
+                        QPointF(self.mm(x2), self.mm(y)))
+
+    def qr(self, data, x, y, size):
+        img = qr_image(data)
+        if img is None:
+            self.box(x, y, size, size, C_RULE)
+            self.centred(x + size / 2, y + size / 2 - 2, "QR n/d",
+                         C_MUTED, size=6)
+            return
+        self.p.drawImage(QRectF(self.mm(x), self.mm(y),
+                                self.mm(size), self.mm(size)), img)
+
+    def fold_marks(self):
+        for y in (FOLD1, FOLD2):
+            self.rule(0, y, 8, C_MUTED, 0.3)
+            self.rule(PAGE_W - 8, y, PAGE_W, C_MUTED, 0.3)
+            x = 13.0
+            while x < PAGE_W - 13:
+                self.rule(x, y, x + 2.5, C_HAIR, 0.25)
+                x += 6.0
+
+
+def qr_image(data, scale=6):
+    try:
+        import qrcode
+    except Exception:
+        return None
+    try:
+        qr = qrcode.QRCode(border=1,
+                           error_correction=qrcode.constants.ERROR_CORRECT_M)
+        qr.add_data(data)
+        qr.make(fit=True)
+        m = qr.get_matrix()
+        n = len(m)
+        img = QImage(n * scale, n * scale, QImage.Format.Format_RGB32)
+        img.fill(C_WHITE)
+        black = C_BLACK.rgb()
+        for yy in range(n):
+            row = m[yy]
+            for xx in range(n):
+                if row[xx]:
+                    for dy in range(scale):
+                        for dx in range(scale):
+                            img.setPixel(xx * scale + dx, yy * scale + dy,
+                                         black)
+        return img
+    except Exception:
+        return None
+
+
+# --------------------------------------------------------------------------- #
+#  Blocchi comuni
+# --------------------------------------------------------------------------- #
+
+EXPLORER = "mempool.space"
+
+
+def _header(s, title, name, subtitle=""):
+    s.fill(0, 0, PAGE_W, 3.5, C_ACC)
+    s.centred(PAGE_W / 2, 9.5, title, C_ACC_D, size=7.5, bold=True)
+    y = s.centred(PAGE_W / 2, 15, name, C_INK, size=19, bold=True)
+    if subtitle:
+        y = s.centred(PAGE_W / 2, y + 1.5, subtitle, C_MUTED, size=8)
+    return y + 3
+
+
+def _address_block(s, y, address, xpub=""):
+    """Due blocchi impilati, separati da una linea.
+
+    Per ogni blocco: QR a sinistra, e a destra l'etichetta con sotto il
+    valore. Tenendo l'etichetta dentro la colonna di testo invece che a
+    tutta pagina si guadagna spazio verticale, e il valore puo' usare un
+    corpo piu' grande.
+    """
+    qs = 24.0
+    gap = 5.0
+    tx = MARGIN + qs + gap
+    tw = PAGE_W - MARGIN - tx
+
+    def block(y, label, value, max_lines, size_max, size_min, bold):
+        s.qr(value, MARGIN, y, qs)
+        s.text(tx, y + 1.5, label, C_ACC_D, size=7.5, bold=True)
+        f = _fit_lines(s, value, tw, max_lines, size_max, size_min, bold)
+        s.wrapped(tx, y + 7.5, tw, value,
+                  C_INK if bold else C_BODY, font=f, anywhere=True)
+        return y + qs + 3
+
+    y = block(y, "INDIRIZZO DI RICEZIONE", address, 1, 13.0, 7.5, True)
+    if not xpub:
+        return y
+
+    s.rule(MARGIN, y, PAGE_W - MARGIN, C_HAIR, 0.4)
+    y += 3.5
+    y = block(y, "CHIAVE PUBBLICA \u2014 PORTAFOGLIO DI SOLA LETTURA",
+              xpub, 2, 13.0, 6.5, False)
+    return y
+
+
+def _fit_lines(s, text, w_mm, max_lines, size_max, size_min, bold=False):
+    """Il corpo piu' grande che fa stare il testo in max_lines righe.
+
+    Serve a non dover indovinare una dimensione fissa: indirizzi e chiavi
+    hanno lunghezze diverse (bc1q, bc1p, xpub, zpub) e una misura scelta a
+    mano andrebbe bene solo per un caso.
+    """
+    size = size_max
+    while size > size_min:
+        f = s.font(size, bold=bold, mono=True)
+        fm = s.metrics(f)
+        maxw = s.mm(w_mm)
+        line, n = "", 1
+        for ch in text:
+            if fm.horizontalAdvance(line + ch) > maxw:
+                n += 1
+                line = ch
+            else:
+                line += ch
+        if n <= max_lines:
+            return f
+        size -= 0.25
+    return s.font(size_min, bold=bold, mono=True)
+
+
+def _will_block(s, y, w, date_str, txid, max_y=None):
+    """Data di consegna e hash della transazione, se disponibili.
+
+    Blocco facoltativo e comprimibile. Se il will di BAL non e' leggibile il
+    chiamante passa valori vuoti e la sezione sparisce senza errori. Se lo
+    spazio residuo fino a max_y non basta per la versione estesa, viene
+    disegnata quella compatta: meglio una riga essenziale che un testo che
+    va a finire sopra il riquadro sottostante.
+    """
+    if not date_str and not txid:
+        return y
+
+    long_date = (f"Data di consegna prevista: {date_str}. Non e' definitiva: "
+                 "finche' e' in vita il titolare puo' spostarla in avanti.")
+    long_txid = ("Incollalo sul sito di un will executor (per esempio "
+                 "we.safe24.io) per verificare tu stesso che l'eredita' "
+                 "esiste e vedere la data registrata.")
+
+    # altezza della versione estesa
+    need = 5.0
+    if date_str:
+        need += s.measure(w, long_date, size=7.6) + 1
+    if txid:
+        need += 4.2 + s.measure(w, txid, font=s.font(7.2, bold=True, mono=True),
+                                anywhere=True) + 0.5
+        need += s.measure(w, long_txid, size=7.6)
+    need += 2
+
+    compact = max_y is not None and (y + need) > max_y
+
+    y = s.text(MARGIN, y, "LA TUA EREDITA' E' GIA' PREPARATA",
+               C_ACC_D, size=7.5, bold=True) + 1
+    if date_str:
+        if compact:
+            y = s.text(MARGIN, y, f"Data di consegna prevista: {date_str} "
+                       "(puo' essere spostata in avanti).",
+                       C_BODY, size=7.4)
+        else:
+            y = s.wrapped(MARGIN, y, w, long_date, C_BODY, size=7.6) + 1
+    if txid:
+        y = s.text(MARGIN, y, "Transazione preparata, verificabile su un will "
+                   "executor (es. we.safe24.io):", C_BODY, size=7.4)
+        y = s.wrapped(MARGIN, y + 0.5, w, txid, C_ACC_D,
+                      font=s.font(7.2, bold=True, mono=True),
+                      anywhere=True) + 0.5
+        if not compact:
+            y = s.wrapped(MARGIN, y, w, long_txid, C_BODY, size=7.6)
+    return y + 2
+
+
+# --------------------------------------------------------------------------- #
+#  Foglio A: beneficiario con seed generato da noi (fronte/retro, piega in 3)
+# --------------------------------------------------------------------------- #
+
+STEPS_SEED = [
+    ("1.  Controlla se i fondi sono arrivati",
+     f"Digita a mano l'indirizzo qui sopra su un esploratore pubblico come "
+     f"{EXPLORER}. Non serve alcuna password e non espone nulla: gli "
+     f"indirizzi sono pubblici per definizione."),
+    ("2.  Segui l'eredita' dal telefono, senza rischi",
+     "Installa un portafoglio che accetti una chiave pubblica (BlueWallet, "
+     "Sparrow e altri) e crea un portafoglio di SOLA LETTURA incollando la "
+     "chiave qui sopra, o inquadrando il secondo QR. Vedrai arrivare i fondi "
+     "senza che quel telefono possa spenderli."),
+    ("3.  Quando sarai pronto, prendi possesso dei fondi",
+     "Apri l'ultimo terzo di questo foglio: contiene le dodici parole di "
+     "recupero. Servono solo in quel momento, non prima."),
+]
+
+
+def render_seed_front(s, d):
+    y = _header(s, "EREDITA' IN BITCOIN  \u00b7  DOCUMENTO PER IL BENEFICIARIO",
+                d["name"],
+                f"custodito da: {d['guardian']}" if d.get("guardian") else "")
+    s.rule(MARGIN, y, PAGE_W - MARGIN, C_RULE, 0.4)
+    y += 4
+
+    y = _address_block(s, y, d["address"], d.get("xpub", ""))
+
+    # ---- secondo terzo: istruzioni ----
+    y = max(y, FOLD1 + 7)
+    y = s.text(MARGIN, y, "COME CONTROLLARE E COME RICEVERE",
+               C_ACC_D, size=10.5, bold=True) + 3
+    w = PAGE_W - 2 * MARGIN
+    for head, body in STEPS_SEED:
+        y = s.text(MARGIN, y, head, C_INK, size=8.2, bold=True) + 0.8
+        y = s.wrapped(MARGIN + 4, y, w - 4, body, C_BODY, size=7.8) + 2.2
+
+    # Il riquadro anti-truffa e' ancorato sopra la piega: calcoliamo prima
+    # dove inizia, cosi' il blocco data/hash sa quanto spazio ha davvero.
+    warn = ("Notai, banche, avvocati, assistenza tecnica o presunti servizi di "
+            "recupero non hanno mai bisogno delle parole di recupero. Chiunque "
+            "te le chieda sta tentando una truffa. Si digitano solo dentro un "
+            "portafoglio installato da te.")
+    hw = s.measure(w - 6, warn, size=7.4) + 9
+    by = FOLD2 - hw - 4
+
+    y = _will_block(s, y + 1, w, d.get("date"), d.get("txid"), max_y=by - 2)
+
+    s.box(MARGIN, by, w, hw, C_ALERT, 0.5)
+    s.text(MARGIN + 3, by + 2, "NESSUNO DEVE MAI CHIEDERTI LE PAROLE",
+           C_ALERT, size=7.8, bold=True)
+    s.wrapped(MARGIN + 3, by + 6.5, w - 6, warn, C_BODY, size=7.4)
+
+    # ---- terzo terzo: le parole ----
+    s.text(MARGIN, FOLD2 + 4, "PAROLE DI RECUPERO  \u2014  DA TENERE SEGRETE",
+           C_ALERT, size=10.5, bold=True)
+    words = d["seed"].split()
+    # 12 parole -> 3 colonne, caselle larghe e molto leggibili.
+    # 24 parole -> 4 colonne: con 3 servirebbero 8 righe e l'ultima riga di
+    # testo finirebbe a 7 mm dal bordo, dentro la zona che molte stampanti
+    # non stampano affatto.
+    cols = 4 if len(words) > 12 else 3
+    bw = (PAGE_W - 2 * MARGIN) / cols
+    bh = 10.5 if len(words) <= 12 else 9.5
+    top = FOLD2 + 12
+    for i, word in enumerate(words):
+        r, c = divmod(i, cols)
+        bx = MARGIN + c * bw
+        byy = top + r * bh
+        s.box(bx + 1, byy, bw - 2, bh - 2, C_RULE, 0.35)
+        s.text(bx + 3, byy + 1.2, str(i + 1), C_MUTED, size=6)
+        s.text(bx + 8, byy + 2.4, word, C_INK, size=10.5, bold=True, mono=True)
+
+    yy = top + ((len(words) + cols - 1) // cols) * bh + 3
+    yy = s.wrapped(MARGIN, yy, PAGE_W - 2 * MARGIN,
+                   "Chiunque legga queste parole puo' prendere i fondi. "
+                   "Piega il foglio in tre lungo i segni e tienilo chiuso.",
+                   C_ALERT, size=7.4, bold=True) + 1
+    acct = d.get("account_derivation") or "m/84'/0'/0'"
+    # Va stampato il percorso dell'ACCOUNT (m/84'/0'/0'), non quello del
+    # primo indirizzo (m/84'/0'/0'/0/0): e' il primo che i wallet chiedono
+    # nel campo "derivazione". Scrivere il secondo porterebbe a un wallet
+    # diverso e vuoto.
+    s.wrapped(MARGIN, yy, PAGE_W - 2 * MARGIN,
+              "Seed in formato BIP39 standard: funziona in qualunque wallet "
+              "compatibile, non solo in Electrum. Percorso di derivazione da "
+              f"inserire: {acct}. "
+              "Istruzioni complete sul RETRO di questo foglio.",
+              C_INK, size=10.2, bold=True)
+
+    s.fold_marks()
+
+
+SEC_A = [
+    ("Va bene qualunque wallet Bitcoin affidabile",
+     "Queste dodici parole seguono lo standard BIP39, non sono legate a un "
+     "singolo programma. Funzionano in Electrum, Sparrow, BlueWallet e nei "
+     "dispositivi come Ledger, Trezor, Coldcard, oltre che in quasi ogni "
+     "altro wallet Bitcoin. Nella maggior parte di questi la procedura e' "
+     "brevissima: scegli \"ripristina da seed\", digiti le parole, hai "
+     "finito."),
+    ("Come capire se un programma e' affidabile",
+     "Quei nomi sono quelli noti oggi e potrebbero cambiare: conta il "
+     "criterio piu' del nome. Dev'essere open source, con anni di storia e "
+     "molti utenti, scaricato SEMPRE dal sito ufficiale digitando "
+     "l'indirizzo a mano. Mai da link ricevuti per messaggio o e-mail, e "
+     "mai dai primi risultati di un motore di ricerca: le copie fatte per "
+     "rubare i fondi si presentano bene e sono la truffa piu' comune."),
+    ("Fatti aiutare, ma non consegnare le parole",
+     "Puoi farti assistere da una persona di fiducia competente: puo' "
+     "installare il programma e spiegarti. Quello che non deve mai "
+     "succedere e' che le parole finiscano in mano sua, in una foto o su "
+     "un sito."),
+]
+
+SEC_B = [
+    ("Attiva l'opzione BIP39",
+     "Crea un nuovo wallet, scegli \"Standard wallet\" e poi \"I already "
+     "have a seed\". Nella schermata dove si scrivono le parole clicca "
+     "\"Options\" e spunta \"BIP39 seed\". Senza quella spunta Electrum "
+     "rifiutera' le parole dicendo che il seed non e' valido: non e' vero, "
+     "manca solo l'opzione."),
+    ("L'avviso che compare e' normale",
+     "Spuntando quella casella Electrum mostra un messaggio: dice che i seed "
+     "BIP39 si possono importare ma che Electrum non li genera, che non "
+     "contengono un numero di versione e che il supporto futuro non e' "
+     "garantito. Non riguarda il tuo seed e non significa che ci sia un "
+     "problema. Prosegui."),
+    ("Percorso di derivazione",
+     "Digita le parole nell'ordine esatto, in minuscolo, separate da uno "
+     "spazio. Quando Electrum chiede il percorso di derivazione inserisci "
+     "quello corto stampato sul fronte, del tipo m/84'/0'/0'. Non aggiungere "
+     "altri numeri in fondo."),
+]
+
+
+def _section(s, y, w, letter, title, items, color):
+    y = s.text(MARGIN, y, f"{letter}.   {title}", color, size=9.5,
+               bold=True) + 2
+    for head, body in items:
+        y = s.text(MARGIN + 4, y, head, C_INK, size=8.0, bold=True) + 0.6
+        y = s.wrapped(MARGIN + 8, y, w - 8, body, C_BODY, size=7.5) + 1.8
+    return y + 1.2
+
+
+def render_seed_back(s, has_seed=True):
+    """Retro: istruzioni complete di recupero, piu' la banda di protezione.
+
+    Ordine voluto: prima la liberta' di scelta del programma (con il
+    criterio per non cadere in una copia truffaldina), poi il caso
+    particolare di Electrum, infine la verifica dell'indirizzo, che vale con
+    qualunque wallet e non deve sembrare un dettaglio della procedura
+    Electrum.
+    """
+    y = s.centred(PAGE_W / 2, 11,
+                  "STAMPA FRONTE/RETRO  \u2014  GIRO SUL LATO LUNGO   "
+                  "\u00b7   PIEGA IN TRE LUNGO I SEGNI",
+                  C_MUTED, size=8, bold=True) + 3.5
+
+    w = PAGE_W - 2 * MARGIN
+    y = s.text(MARGIN, y, "COME RECUPERARE I FONDI, QUANDO SARA' IL MOMENTO",
+               C_ACC_D, size=12, bold=True) + 1.5
+    y = s.wrapped(MARGIN, y, w,
+                  "Da seguire solo quando avrai aperto l'ultimo terzo del "
+                  "foglio e avrai davanti le parole di recupero. Fino ad "
+                  "allora non serve fare nulla.", C_MUTED, size=7.6) + 3
+
+    y = _section(s, y, w, "A", "CON QUALE PROGRAMMA", SEC_A, C_ACC_D)
+    y = _section(s, y, w, "B", "SE SCEGLI ELECTRUM", SEC_B, C_ACC_D)
+
+    # --- C: vale per qualunque wallet, quindi sta fuori dalla sezione B ---
+    y = s.text(MARGIN, y, "C.   VERIFICA FINALE  -  CON QUALUNQUE PROGRAMMA",
+               C_ALERT, size=9.5, bold=True) + 2
+    y = s.text(MARGIN + 4, y, "Confronta il primo indirizzo", C_INK,
+               size=8.0, bold=True) + 0.6
+    y = s.wrapped(MARGIN + 8, y, w - 8,
+                  "A wallet creato, apri la sezione \"Ricevi\" o "
+                  "\"Indirizzi\" e confronta il primo indirizzo con quello "
+                  "stampato sul fronte di questo foglio. Devono essere "
+                  "identici, carattere per carattere.", C_BODY, size=7.6) + 2.2
+    y = s.text(MARGIN + 4, y, "Se NON coincidono", C_ALERT,
+                   size=8.0, bold=True) + 0.6
+    y = s.wrapped(MARGIN + 8, y, w - 8,
+                  "Hai sbagliato una parola o il percorso di derivazione. "
+                  "Attenzione: il controllo automatico delle parole non "
+                  "intercetta tutti gli errori, quindi il programma potrebbe "
+                  "accettarle e crearti comunque un portafoglio: sarebbe "
+                  "pero' un portafoglio diverso e vuoto, e potresti credere "
+                  "di aver perso l'eredita'. Non e' cosi': e' proprio per "
+                  "questo che devi confrontare l'indirizzo. Ricontrolla "
+                  "parola per parola e ripeti.",
+                  C_BODY, size=7.5)
+
+    # Guardia: sotto FOLD2 arriva la banda nera, che coprirebbe il testo
+    # rendendolo invisibile in stampa. Meglio accorgersene qui che su carta.
+    if has_seed and y > FOLD2:
+        import logging
+        logging.getLogger(__name__).error(
+            "istruzioni del retro oltre la piega (%.1f mm > %.1f): "
+            "verrebbero coperte dalla banda di protezione", y, FOLD2)
+
+    if not has_seed:
+        s.fold_marks()
+        return
+
+    # banda di protezione sull'ultimo terzo, dietro le parole del fronte
+    s.fill(0, FOLD2, PAGE_W, PAGE_H - FOLD2, C_BLACK)
+    rnd = random.Random()
+    s.p.setPen(Qt.PenStyle.NoPen)
+    top, h, wd = s.mm(FOLD2), s.mm(PAGE_H - FOLD2), s.mm(PAGE_W)
+    dot = s.mm(0.45)
+    for _ in range(3200):
+        g = rnd.randint(12, 92)
+        s.p.setBrush(QBrush(QColor(g, g, g)))
+        s.p.drawRect(QRectF(rnd.uniform(0, wd), top + rnd.uniform(0, h),
+                            dot, dot))
+    s.centred(PAGE_W / 2, (FOLD2 + PAGE_H) / 2 - 2,
+              "AREA DI PROTEZIONE  \u2014  copre le parole in controluce",
+              QColor("#3C3C3C"), size=8, bold=True)
+    s.fold_marks()
+
+
+# --------------------------------------------------------------------------- #
+#  Foglio B: beneficiario che ha fornito il proprio indirizzo (una pagina)
+# --------------------------------------------------------------------------- #
+
+STEPS_GIVEN = [
+    ("1.  Controlla quando vuoi se i fondi sono arrivati",
+     f"Digita a mano l'indirizzo qui sopra su un esploratore pubblico come "
+     f"{EXPLORER}. Non serve alcuna password: gli indirizzi sono pubblici e "
+     f"la consultazione non comporta rischi."),
+    ("2.  Verifica che l'indirizzo sia davvero tuo",
+     "Controlla che compaia tra quelli del tuo portafoglio. Se non lo "
+     "riconosci, non ignorare la cosa: contatta subito chi ti ha consegnato "
+     "questo documento."),
+    ("3.  Non devi fare nulla per ricevere",
+     "I fondi arriveranno da soli all'indirizzo, in un momento futuro. Un "
+     "indirizzo Bitcoin non scade e resta valido per sempre."),
+    ("4.  Le tue chiavi restano tue",
+     "Chi ha predisposto questa eredita' non conosce le tue parole di "
+     "recupero e non puo' toccare i tuoi fondi. Custodiscile come sempre: "
+     "sono l'unica cosa che serve per spendere."),
+]
+
+
+def render_given(s, d):
+    y = _header(s, "EREDITA' IN BITCOIN  \u00b7  DOCUMENTO PER IL BENEFICIARIO",
+                d["name"], "Indirizzo fornito dal beneficiario")
+    s.rule(MARGIN, y, PAGE_W - MARGIN, C_RULE, 0.4)
+    y += 5
+
+    y = _address_block(s, y, d["address"], "")
+    y += 3
+    w = PAGE_W - 2 * MARGIN
+
+    y = s.text(MARGIN, y, "COSA SAPERE", C_ACC_D, size=10.5, bold=True) + 3
+    for head, body in STEPS_GIVEN:
+        y = s.text(MARGIN, y, head, C_INK, size=8.2, bold=True) + 0.8
+        y = s.wrapped(MARGIN + 4, y, w - 4, body, C_BODY, size=7.8) + 2.4
+
+    warn = ("Nessuno, con nessuna qualifica, ha motivo di chiederti le tue "
+            "parole di recupero in relazione a questa eredita'. Chiunque lo "
+            "faccia sta tentando una truffa. Diffida anche dei link ricevuti "
+            "via e-mail o messaggio: digita sempre gli indirizzi a mano.")
+    hw = s.measure(w - 6, warn, size=7.4) + 9
+    y = _will_block(s, y, w, d.get("date"), d.get("txid"),
+                    max_y=PAGE_H - 22 - hw) + 2
+    s.box(MARGIN, y, w, hw, C_ALERT, 0.5)
+    s.text(MARGIN + 3, y + 2, "ATTENZIONE ALLE TRUFFE", C_ALERT,
+           size=7.8, bold=True)
+    s.wrapped(MARGIN + 3, y + 6.5, w - 6, warn, C_BODY, size=7.4)
+
+    s.text(MARGIN, PAGE_H - 14,
+           "Nessuna parola di recupero e' contenuta in questo foglio.",
+           C_MUTED, size=7)
+    s.text(MARGIN, PAGE_H - 10.5, "BAL Easy Heirs \u00b7 SAFE21",
+           C_MUTED, size=7)
+
+
+# --------------------------------------------------------------------------- #
+#  Riepilogo: TUTTI i beneficiari, di entrambi i tipi
+# --------------------------------------------------------------------------- #
+
+def render_report(s, wallet_name, rows, page=1, per_page=9):
+    _header(s, "RIEPILOGO  \u00b7  COPIA RISERVATA ALL'ESECUTORE",
+            "Elenco dei beneficiari",
+            f"{wallet_name}  \u00b7  {len(rows)} beneficiari")
+    y = 32
+    s.rule(MARGIN, y, PAGE_W - MARGIN, C_RULE, 0.4)
+    y += 4
+
+    w = PAGE_W - 2 * MARGIN
+    note = ("Solo nomi e indirizzi pubblici: nessuna parola di recupero, "
+            "nessuna chiave privata, nessun importo. Chi lo legge non puo' "
+            "accedere ai fondi.")
+    hn = s.measure(w - 6, note, size=7.4) + 9
+    s.box(MARGIN, y, w, hn, C_RULE, 0.4)
+    s.text(MARGIN + 3, y + 2, "QUESTO FOGLIO NON CONTIENE SEGRETI",
+           C_INK, size=7.8, bold=True)
+    s.wrapped(MARGIN + 3, y + 6.5, w - 6, note, C_BODY, size=7.4)
+    y += hn + 5
+
+    start = (page - 1) * per_page
+    chunk = rows[start:start + per_page]
+    pending = []
+
+    for i, r in enumerate(chunk, start=start + 1):
+        s.text(MARGIN, y + 0.8, f"{i:02d}", C_MUTED, size=7.5)
+        s.text(MARGIN + 8, y, r["name"], C_INK, size=10.5, bold=True)
+        tag = "GENERATO DA ME" if r.get("generated") else "INDIRIZZO FORNITO"
+        fm = s.metrics(s.font(6.8, bold=True))
+        tw = s.to_mm(fm.horizontalAdvance(tag))
+        s.text(PAGE_W - MARGIN - tw, y + 1, tag, C_ACC_D, size=6.8, bold=True)
+
+        # quota assegnata: e' il dato che serve all'esecutore per controllare
+        # che la somma torni. Viene da BAL e puo' essere una percentuale o un
+        # importo fisso; se e' ancora il segnaposto lo diciamo esplicitamente.
+        share = r.get("share") or ""
+        if share:
+            undef = r.get("placeholder_amount")
+            fs = s.font(11 if not undef else 8, bold=True)
+            sw = s.to_mm(s.metrics(fs).horizontalAdvance(share))
+            s.text(PAGE_W - MARGIN - tw - sw - 6, y - 0.3, share,
+                   C_ALERT if undef else C_INK, font=fs)
+        y += 5.4
+        s.text(MARGIN + 8, y, r.get("address") or "\u2014", C_INK,
+               size=8.4, bold=True, mono=True)
+        y += 4.8
+
+        extra = []
+        if r.get("envelope"):
+            extra.append(f"busta n. {r['envelope']}")
+        if r.get("date"):
+            extra.append(f"consegna: {r['date']}")
+        if r.get("placeholder_amount"):
+            extra.append("IMPORTO DA DEFINIRE IN BAL")
+            pending.append(r["name"])
+        if extra:
+            s.text(MARGIN + 8, y, "   \u00b7   ".join(extra),
+                   C_ALERT if r.get("placeholder_amount") else C_MUTED,
+                   size=6.9)
+            y += 4.2
+        s.rule(MARGIN, y, PAGE_W - MARGIN, C_HAIR, 0.25)
+        y += 3.4
+
+    if pending:
+        txt = ("Hanno un importo segnaposto, messo solo per non farli scartare "
+               "dai controlli di BAL: " + ", ".join(pending) + ". Vanno "
+               "corretti con la quota reale, altrimenti riceveranno quella "
+               "cifra irrisoria senza alcun messaggio di errore.")
+        hp = s.measure(w - 6, txt, size=7.4) + 9
+        y += 2
+        s.box(MARGIN, y, w, hp, C_ALERT, 0.5)
+        s.text(MARGIN + 3, y + 2, "DA COMPLETARE IN BAL", C_ALERT,
+               size=7.8, bold=True)
+        s.wrapped(MARGIN + 3, y + 6.5, w - 6, txt, C_BODY, size=7.4)
+
+    total_pages = max(1, (len(rows) + per_page - 1) // per_page)
+    s.text(MARGIN, PAGE_H - 14,
+           "Le parole di recupero non sono mai state salvate in un file: "
+           "esistono solo sui fogli stampati e dentro questo wallet.",
+           C_MUTED, size=6.8)
+    s.text(MARGIN, PAGE_H - 10.5,
+           f"BAL Easy Heirs \u00b7 SAFE21   \u2014   pagina {page} di "
+           f"{total_pages}", C_MUTED, size=6.8)
+    return total_pages
