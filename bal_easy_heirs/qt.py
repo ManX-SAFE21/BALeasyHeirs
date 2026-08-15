@@ -327,7 +327,9 @@ def _draw(device, jobs):
 
 
 def _jobs_for(row, seed=None):
-    """Le pagine di un beneficiario: due se ha il seed, una altrimenti."""
+    """Le pagine di un beneficiario. Sempre due, per tenere allineata la
+    stampa fronte/retro: seed -> fronte + retro con le istruzioni; solo
+    indirizzo -> scheda + retro vuoto."""
     data = {
         "name": row["name"], "address": row["address"],
         "xpub": row.get("xpub", ""), "seed": seed or "",
@@ -339,7 +341,11 @@ def _jobs_for(row, seed=None):
     if seed:
         return [lambda s: sheets.render_seed_front(s, data),
                 lambda s: sheets.render_seed_back(s, has_seed=True)]
-    return [lambda s: sheets.render_given(s, data)]
+    # Anche l'erede con solo indirizzo occupa DUE pagine (scheda + retro
+    # vuoto): cosi' ogni documento ha un numero pari di pagine e la stampa
+    # fronte/retro resta allineata, invece di sfasarsi dopo una pagina dispari.
+    return [lambda s: sheets.render_given(s, data),
+            lambda s: sheets.render_blank_back(s)]
 
 
 # ===========================================================================

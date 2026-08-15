@@ -639,6 +639,26 @@ def render_given(s, d):
            C_MUTED, size=7)
 
 
+def render_blank_back(s):
+    """Retro deliberatamente vuoto per i documenti di UNA sola pagina
+    (gli eredi che hanno fornito solo l'indirizzo, senza seed).
+
+    Serve a dare a OGNI documento un numero PARI di pagine. In stampa
+    fronte/retro il driver accoppia le pagine a due a due sullo stesso foglio
+    fisico: un documento di una sola pagina sfaserebbe l'accoppiamento di
+    tutti i documenti successivi (il fronte di uno finirebbe sul retro di un
+    altro). Con questo retro ogni scheda occupa un foglio intero e
+    l'allineamento resta corretto, anche stampando prima su PDF e poi in
+    fronte/retro.
+    """
+    s.centred(PAGE_W / 2, PAGE_H / 2 - 2,
+              "Pagina lasciata intenzionalmente vuota \u2014 serve a mantenere "
+              "allineata la stampa fronte/retro",
+              C_MUTED, size=9, bold=True)
+    s.text(MARGIN, PAGE_H - 10.5, "BAL Easy Heirs \u00b7 SAFE21",
+           C_MUTED, size=7)
+
+
 # --------------------------------------------------------------------------- #
 #  Riepilogo: TUTTI i beneficiari, di entrambi i tipi
 # --------------------------------------------------------------------------- #
@@ -669,8 +689,11 @@ def render_report(s, wallet_name, rows, page=1, per_page=9):
     BEN_X = MARGIN + 13       # nome + indirizzo
     QUOTA_R = 140.0           # bordo destro della colonna "Quota"
     TIPO_R = 178.0            # bordo destro della colonna "Tipo"
-    QR_C = 188.5              # centro della colonna "QR"
-    QS = 11.0                 # lato del QR (quadrato), in mm
+    QS = 14.3                 # lato del QR (quadrato), in mm: +30% rispetto
+                              # agli 11 mm precedenti, come richiesto
+    # Centro della colonna "QR": lo teniamo allineato a destra in modo che il
+    # QR piu' grande resti dentro il margine (bordo destro ~194 mm < 195).
+    QR_C = PAGE_W - MARGIN - QS / 2
 
     # ---- intestazioni di colonna -----------------------------------------
     hy = y
@@ -720,10 +743,12 @@ def render_report(s, wallet_name, rows, page=1, per_page=9):
                    C_ALERT if undef else C_INK, font=fs)
         y += 5.4
 
-        # Indirizzo pubblico (monospazio).
+        # Indirizzo pubblico (monospazio). Corpo 10.5: +25% rispetto agli 8.4
+        # precedenti. Anche un indirizzo taproot (62 caratteri) resta entro
+        # ~166 mm, quindi non tocca ne' la colonna QR ne' il margine.
         s.text(BEN_X, y, r.get("address") or "\u2014", C_INK,
-               size=8.4, bold=True, mono=True)
-        y += 4.8
+               size=10.5, bold=True, mono=True)
+        y += 6.0
 
         # Nota facoltativa sotto l'indirizzo (data di consegna, segnaposto).
         # Il numero di busta ora e' nella colonna a sinistra, non piu' qui.
