@@ -171,12 +171,19 @@ class Sheet:
                                 self.mm(size), self.mm(size)), img)
 
     def fold_marks(self):
+        # Le tacche laterali stanno a 3 mm dai bordi: se arrivassero fino al
+        # bordo del foglio finirebbero nel margine morto che quasi tutte le
+        # stampanti non stampano, ed e' il motivo per cui prima si vedevano
+        # solo a sinistra. Tenendole simmetriche e dentro l'area stampabile
+        # compaiono su entrambi i lati.
+        edge = 3.0
+        tick = 8.0
         for y in (FOLD1, FOLD2):
-            self.rule(0, y, 8, C_MUTED, 0.3)
-            self.rule(PAGE_W - 8, y, PAGE_W, C_MUTED, 0.3)
-            x = 13.0
-            while x < PAGE_W - 13:
-                self.rule(x, y, x + 2.5, C_HAIR, 0.25)
+            self.rule(edge, y, edge + tick, C_MUTED, 0.4)
+            self.rule(PAGE_W - edge - tick, y, PAGE_W - edge, C_MUTED, 0.4)
+            x = 15.0
+            while x <= PAGE_W - 15:
+                self.rule(x, y, x + 2.5, C_HAIR, 0.3)
                 x += 6.0
 
 
@@ -227,17 +234,24 @@ def _header(s, title, name, subtitle=""):
 def _address_block(s, y, address, xpub=""):
     """Due blocchi impilati, separati da una linea.
 
-    Per ogni blocco: QR a sinistra, e a destra l'etichetta con sotto il
-    valore. Tenendo l'etichetta dentro la colonna di testo invece che a
-    tutta pagina si guadagna spazio verticale, e il valore puo' usare un
-    corpo piu' grande.
-    """
-    qs = 24.0
-    gap = 5.0
-    tx = MARGIN + qs + gap
-    tw = PAGE_W - MARGIN - tx
+    Indirizzo di ricezione: QR a SINISTRA, etichetta e valore a destra.
 
-    def block(y, label, value, max_lines, size_max, size_min, bold):
+    Chiave pubblica (zpub): QR a DESTRA e piu' grande (25% in piu'), con
+    etichetta e valore a SINISTRA. E' il QR che il beneficiario inquadra per
+    ricreare il portafoglio di sola lettura, quindi lo rendiamo il piu'
+    comodo da leggere della pagina.
+
+    Tenere l'etichetta dentro la colonna di testo invece che a tutta pagina
+    fa guadagnare spazio verticale e permette al valore un corpo piu' grande.
+    """
+    qs = 24.0            # lato del QR dell'indirizzo
+    qs_big = qs * 1.25   # QR della chiave pubblica: 25% piu' grande (30 mm)
+    gap = 5.0
+
+    def block_qr_left(y, label, value, max_lines, size_max, size_min, bold):
+        """QR a sinistra, testo a destra."""
+        tx = MARGIN + qs + gap
+        tw = PAGE_W - MARGIN - tx
         s.qr(value, MARGIN, y, qs)
         s.text(tx, y + 1.5, label, C_ACC_D, size=7.5, bold=True)
         f = _fit_lines(s, value, tw, max_lines, size_max, size_min, bold)
@@ -245,14 +259,25 @@ def _address_block(s, y, address, xpub=""):
                   C_INK if bold else C_BODY, font=f, anywhere=True)
         return y + qs + 3
 
-    y = block(y, "INDIRIZZO DI RICEZIONE", address, 1, 13.0, 7.5, True)
+    def block_qr_right(y, label, value, max_lines, size_max, size_min, bold):
+        """Testo a sinistra, QR (piu' grande) a destra."""
+        qx = PAGE_W - MARGIN - qs_big
+        tw = qx - gap - MARGIN
+        s.qr(value, qx, y, qs_big)
+        s.text(MARGIN, y + 1.5, label, C_ACC_D, size=7.5, bold=True)
+        f = _fit_lines(s, value, tw, max_lines, size_max, size_min, bold)
+        s.wrapped(MARGIN, y + 7.5, tw, value,
+                  C_INK if bold else C_BODY, font=f, anywhere=True)
+        return y + qs_big + 3
+
+    y = block_qr_left(y, "INDIRIZZO DI RICEZIONE", address, 1, 13.0, 7.5, True)
     if not xpub:
         return y
 
     s.rule(MARGIN, y, PAGE_W - MARGIN, C_HAIR, 0.4)
     y += 3.5
-    y = block(y, "CHIAVE PUBBLICA \u2014 PORTAFOGLIO DI SOLA LETTURA",
-              xpub, 2, 13.0, 6.5, False)
+    y = block_qr_right(y, "CHIAVE PUBBLICA \u2014 PORTAFOGLIO DI SOLA LETTURA",
+                       xpub, 2, 13.0, 6.5, False)
     return y
 
 
@@ -403,7 +428,10 @@ def render_seed_front(s, d):
         byy = top + r * bh
         s.box(bx + 1, byy, bw - 2, bh - 2, C_RULE, 0.35)
         s.text(bx + 3, byy + 1.2, str(i + 1), C_MUTED, size=6)
-        s.text(bx + 8, byy + 2.4, word, C_INK, size=10.5, bold=True, mono=True)
+        # Parole in verde scuro invece che in nero: restano ben leggibili ma
+        # trasparono molto meno se qualcuno illumina il foglio piegato da dietro
+        # con una luce forte (l'inchiostro verde e' meno denso del nero).
+        s.text(bx + 8, byy + 2.4, word, C_ACC_D, size=10.5, bold=True, mono=True)
 
     yy = top + ((len(words) + cols - 1) // cols) * bh + 3
     yy = s.wrapped(MARGIN, yy, PAGE_W - 2 * MARGIN,

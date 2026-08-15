@@ -842,6 +842,14 @@ class PrintDialog(QDialog):
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
         _setup(printer)
         printer.setDocName("BAL Easy Heirs")
+        # Preimpostiamo la stampa fronte/retro con giro sul LATO LUNGO: e' il
+        # modo in cui la banda nera del retro finisce dietro le parole del
+        # fronte. Cosi' la finestra di stampa si apre gia' su questa scelta;
+        # l'utente puo' comunque cambiarla, e il promemoria glielo ricorda.
+        try:
+            printer.setDuplex(QPrinter.DuplexMode.DuplexLongSide)
+        except Exception as e:
+            _logger.info(f"impossibile preimpostare il fronte/retro: {e}")
         if QPrintDialog(printer, self).exec() != QDialog.DialogCode.Accepted:
             return
 
